@@ -14,7 +14,7 @@ let t = 0; // seconds
 // Player (fox)
 const player = {
   x: 100,
-  y: 10,     // ✅ spawn on land/surface
+  y: 10, // ✅ spawn on land/surface
   w: 39,
   h: 39,
   speed: 2.6,
@@ -72,6 +72,28 @@ const decor = {
   wreck: null,
 };
 
+// ===== End-screen assets (thumbs + confetti) =====
+// Put these images in /assets:
+// - transparentwin-Photoroom.png
+// - transparentlose-Photoroom.png
+const thumbsUpImg = new Image();
+thumbsUpImg.src = "assets/transparentwin-Photoroom.png";
+
+const thumbsDownImg = new Image();
+thumbsDownImg.src = "assets/transparentlose-Photoroom.png";
+
+// Confetti particles (spawn once on win)
+const confetti = [];
+let winFXStarted = false;
+let loseFXStarted = false;
+
+// Optional: quick debug
+thumbsUpImg.onload = () => console.log("✅ thumbs up loaded");
+thumbsUpImg.onerror = () => console.log("❌ thumbs up failed (check path/name)");
+
+thumbsDownImg.onload = () => console.log("✅ thumbs down loaded");
+thumbsDownImg.onerror = () => console.log("❌ thumbs down failed (check path/name)");
+
 // ===== Input state =====
 const keys = {
   ArrowUp: false,
@@ -122,6 +144,42 @@ function isUnderwater() {
 
 function px(x, y, s) {
   ctx.fillRect(x, y, s, s);
+}
+
+function endLose() {
+  if (!gameOver) {
+    gameOver = true;
+    if (!loseFXStarted) loseFXStarted = true;
+  }
+}
+
+function startWinFX() {
+  if (winFXStarted) return;
+  winFXStarted = true;
+
+  // explosion center
+  const cx = W / 2;
+  const cy = H / 2 - 30;
+
+  confetti.length = 0;
+  const n = 120;
+
+  for (let i = 0; i < n; i++) {
+    const a = randFloat(0, Math.PI * 2);
+    const sp = randFloat(120, 320);
+    confetti.push({
+      x: cx + randFloat(-12, 12),
+      y: cy + randFloat(-10, 10),
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - randFloat(40, 160),
+      size: randFloat(3, 7),
+      rot: randFloat(0, Math.PI * 2),
+      vr: randFloat(-6, 6),
+      life: randFloat(1.2, 2.0),
+      seed: Math.random() * 10,
+      style: randInt(0, 2), // 0=rect,1=dot,2=short line
+    });
+  }
 }
 
 // ===== Spawn fish =====
@@ -264,6 +322,10 @@ function resetGame() {
   gameOver = false;
   gameWon = false;
 
+  winFXStarted = false;
+  loseFXStarted = false;
+  confetti.length = 0;
+
   bubbles.length = 0;
   bubbleTimer = 0;
 
@@ -284,6 +346,62 @@ let lastTime = performance.now();
 let isMoving = false;
 let kickPhase = 0;
 
+// ===== Confetti update/draw =====
+function updateConfetti(dt) {
+  if (!winFXStarted) return;
+
+  for (let i = confetti.length - 1; i >= 0; i--) {
+    const c = confetti[i];
+    c.life -= dt;
+
+    // gravity + a tiny water-y flutter
+    c.vy += 420 * dt;
+    c.vx += Math.sin(t * 2.2 + c.seed) * 18 * dt;
+
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+
+    c.rot += c.vr * dt;
+
+    // fade out near end
+    if (c.life <= 0 || c.y > H + 40) confetti.splice(i, 1);
+  }
+}
+
+function drawConfetti() {
+  if (!winFXStarted) return;
+
+  for (const c of confetti) {
+    const alpha = clamp(c.life / 1.2, 0, 1) * 0.95;
+
+    // bright confetti (HSL)
+    const hue = (Math.floor((c.seed * 97) % 360) + t * 40) % 360;
+    ctx.fillStyle = `hsla(${hue}, 90%, 60%, ${alpha})`;
+    ctx.strokeStyle = `hsla(${hue}, 90%, 65%, ${alpha})`;
+
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+
+    if (c.style === 0) {
+      ctx.fillRect(-c.size / 2, -c.size / 2, c.size, c.size * 0.7);
+    } else if (c.style === 1) {
+      ctx.beginPath();
+      ctx.arc(0, 0, c.size * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-c.size / 2, 0);
+      ctx.lineTo(c.size / 2, 0);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+
+    ctx.restore();
+  }
+}
+
 // ===== Update =====
 function update(dt) {
   t += dt;
@@ -294,8 +412,12 @@ function update(dt) {
     return;
   }
 
-  // Freeze the game if ended
-  if (gameOver || gameWon) return;
+  // Even when ended, keep win FX moving (confetti)
+  if (gameWon) {
+    updateConfetti(dt);
+    return;
+  }
+  if (gameOver) return;
 
   // Movement input
   let dx = 0;
@@ -333,7 +455,7 @@ function update(dt) {
   oxygen = clamp(oxygen, 0, OXYGEN_MAX);
 
   if (oxygen <= 0) {
-    gameOver = true;
+    endLose();
     return;
   }
 
@@ -394,7 +516,7 @@ function update(dt) {
     if (!m.armed && m.age >= MINE_ARM_DELAY) m.armed = true;
 
     if (m.armed && rectsOverlap(player, m)) {
-      gameOver = true;
+      endLose();
       return;
     }
   }
@@ -414,7 +536,7 @@ function update(dt) {
     L.y += wobble;
 
     if (rectsOverlap(player, L)) {
-      gameOver = true;
+      endLose();
       return;
     }
 
@@ -423,7 +545,10 @@ function update(dt) {
   }
 
   // Win condition
-  if (fishCollected >= TOTAL_FISH) gameWon = true;
+  if (fishCollected >= TOTAL_FISH) {
+    gameWon = true;
+    startWinFX();
+  }
 }
 
 // ===== Background drawing =====
@@ -554,8 +679,7 @@ function drawBackground() {
 function drawSeaweedForeground() {
   // only makes sense underwater, but looks fine across screen
   for (const w of seaweed) {
-    const sway =
-      Math.sin(t * 1.3 + w.seed) * (w.layer === 2 ? 10 : 6);
+    const sway = Math.sin(t * 1.3 + w.seed) * (w.layer === 2 ? 10 : 6);
 
     const tipX = w.x + sway;
     const baseX = w.x;
@@ -567,12 +691,7 @@ function drawSeaweedForeground() {
     ctx.lineWidth = w.layer === 2 ? 5 : 4;
     ctx.beginPath();
     ctx.moveTo(baseX, baseY);
-    ctx.quadraticCurveTo(
-      baseX + sway * 0.35,
-      baseY - w.h * 0.45,
-      tipX,
-      tipY
-    );
+    ctx.quadraticCurveTo(baseX + sway * 0.35, baseY - w.h * 0.45, tipX, tipY);
     ctx.stroke();
 
     // leaf highlight
@@ -830,6 +949,31 @@ function drawOxygenBar() {
   ctx.fillText("OXYGEN", barX + barW + 10, barY + 12);
 }
 
+// ===== End overlays (thumbs) =====
+function drawThumbOverlay(isWin) {
+  const img = isWin ? thumbsUpImg : thumbsDownImg;
+
+  // size + position
+  const size = 200;
+  const x = W / 2 - size / 2;
+  const y = H / 2 - size / 2 - 10;
+
+  // shadow
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.beginPath();
+  ctx.ellipse(W / 2, y + size + 18, 90, 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // draw image when loaded; if not loaded yet, draw fallback
+  if (img.complete && img.naturalWidth > 0) {
+    ctx.drawImage(img, x, y, size, size);
+  } else {
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = "22px system-ui";
+    ctx.fillText(isWin ? "👍" : "👎", W / 2 - 12, H / 2);
+  }
+}
+
 // ===== Draw =====
 function draw() {
   ctx.clearRect(0, 0, W, H);
@@ -875,35 +1019,44 @@ function draw() {
   // Player
   drawFoxSprite(player.x, player.y, player.facing);
 
-  // ✅ Foreground seaweed (over gameplay)
+  // Foreground seaweed (over gameplay)
   drawSeaweedForeground();
 
-  // ✅ Vignette (final mood pass)
+  // Vignette (final mood pass)
   drawVignette();
 
-  // Overlays
+  // ===== End screens =====
   if (gameOver) {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, 0, W, H);
 
+    // thumbs down
+    drawThumbOverlay(false);
+
     ctx.fillStyle = "rgba(255,255,255,0.98)";
-    ctx.font = "38px system-ui";
-    ctx.fillText("GAME OVER", W / 2 - 120, H / 2 - 10);
+    ctx.font = "34px system-ui";
+    ctx.fillText("GAME OVER", W / 2 - 105, H / 2 + 140);
 
     ctx.font = "18px system-ui";
-    ctx.fillText("Press R to Restart", W / 2 - 85, H / 2 + 26);
+    ctx.fillText("Press R to Restart", W / 2 - 85, H / 2 + 172);
   }
 
   if (gameWon) {
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillStyle = "rgba(0,0,0,0.45)";
     ctx.fillRect(0, 0, W, H);
 
+    // confetti behind thumb
+    drawConfetti();
+
+    // thumbs up
+    drawThumbOverlay(true);
+
     ctx.fillStyle = "rgba(255,255,255,0.98)";
-    ctx.font = "38px system-ui";
-    ctx.fillText("YOU WIN!", W / 2 - 90, H / 2 - 10);
+    ctx.font = "34px system-ui";
+    ctx.fillText("YOU WIN!", W / 2 - 78, H / 2 + 140);
 
     ctx.font = "18px system-ui";
-    ctx.fillText("Press R to Play Again", W / 2 - 105, H / 2 + 26);
+    ctx.fillText("Press R to Play Again", W / 2 - 105, H / 2 + 172);
   }
 }
 
