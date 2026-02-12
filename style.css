@@ -1,0 +1,25 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, Arial, sans-serif;
+  background: #0b1220;
+  color: #e8eefc;
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+}
+
+.wrap {
+  width: min(900px, 95vw);
+  text-align: center;
+}
+
+h1 { margin: 12px 0 6px; }
+.hint, .subhint { margin: 6px 0 10px; opacity: 0.9; }
+
+canvas {
+  border: 4px solid #1b2a52;
+  border-radius: 10px;
+  background: #0f2a4a; /* water base */
+  image-rendering: pixelated; /* crisp pixels */
+}
