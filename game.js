@@ -12,9 +12,10 @@ const SURFACE_HEIGHT = 60;
 const player = {
   x: 100,
   y: 120,
-  w: 18,
-  h: 18,
+  w: 39,
+  h: 39,
   speed: 2.6,
+  facing: 1, // 1 = right, -1 = left
 };
 
 // ===== Fish Setup =====
@@ -29,7 +30,6 @@ const FISH_H = 10;
 const OXYGEN_MAX = 100;
 let oxygen = OXYGEN_MAX;
 
-// Tune these to taste
 const DRAIN_RATE = 18;   // oxygen per second drained underwater
 const REFILL_RATE = 55;  // oxygen per second refilled at surface
 
@@ -73,7 +73,6 @@ function rectsOverlap(a, b) {
 }
 
 function isAtSurface() {
-  // If any part of the player is inside the surface strip, count as breathing
   return player.y < SURFACE_HEIGHT;
 }
 
@@ -85,14 +84,13 @@ function spawnFish() {
   const padding = 10;
 
   for (let i = 0; i < TOTAL_FISH; i++) {
-    const fish = {
+    fishList.push({
       x: randInt(padding, W - FISH_W - padding),
       y: randInt(SURFACE_HEIGHT + padding, H - FISH_H - padding),
       w: FISH_W,
       h: FISH_H,
       alive: true,
-    };
-    fishList.push(fish);
+    });
   }
 }
 
@@ -130,6 +128,10 @@ function update(dt) {
   if (keys.ArrowLeft) dx -= 1;
   if (keys.ArrowRight) dx += 1;
 
+  // ✅ facing must be set AFTER dx is computed
+  if (dx < 0) player.facing = -1;
+  if (dx > 0) player.facing = 1;
+
   // Normalize diagonal movement
   if (dx !== 0 && dy !== 0) {
     const inv = 1 / Math.sqrt(2);
@@ -166,13 +168,18 @@ function update(dt) {
     }
   }
 
-  // ✅ Win condition (MUST be inside update so it checks every frame)
+  // Win condition
   if (fishCollected >= TOTAL_FISH) {
     gameWon = true;
   }
 }
 
-// ===== Draw fish =====
+// ===== Drawing helpers =====
+function px(x, y, s) {
+  ctx.fillRect(x, y, s, s);
+}
+
+// ===== Fish drawing =====
 function drawFish(f) {
   const x = Math.round(f.x);
   const y = Math.round(f.y);
@@ -190,24 +197,110 @@ function drawFish(f) {
   ctx.fillRect(x + 2, y + 4, 2, 2);
 }
 
-// ===== Draw oxygen bar =====
+// ===== Fox sprite =====
+function drawFoxSprite(x, y, facing) {
+  const S = 3;
+  const ox = Math.round(x);
+  const oy = Math.round(y);
+
+  const ORANGE = "#f08c2b";
+  const DARK = "#2b1a10";
+  const CREAM = "#f7e6c6";
+  const BLUE = "#6dd6ff";
+  const GLASS = "rgba(200,245,255,0.75)";
+  const BLACK = "#0b1220";
+
+  const GRID = 13;
+  const fx = (gx) => {
+    const mx = facing === 1 ? gx : GRID - 1 - gx;
+    return ox + mx * S;
+  };
+  const fy = (gy) => oy + gy * S;
+
+  // Head base
+  ctx.fillStyle = ORANGE;
+  for (let gy = 2; gy <= 9; gy++) {
+    for (let gx = 3; gx <= 9; gx++) px(fx(gx), fy(gy), S);
+  }
+
+  // Ears
+  for (let gy = 0; gy <= 2; gy++) px(fx(4), fy(gy), S);
+  px(fx(5), fy(1), S);
+
+  for (let gy = 0; gy <= 2; gy++) px(fx(8), fy(gy), S);
+  px(fx(7), fy(1), S);
+
+  // Ear inner
+  ctx.fillStyle = CREAM;
+  px(fx(4), fy(2), S);
+  px(fx(8), fy(2), S);
+
+  // Muzzle
+  ctx.fillStyle = CREAM;
+  for (let gx = 4; gx <= 8; gx++) px(fx(gx), fy(8), S);
+  for (let gx = 5; gx <= 7; gx++) px(fx(gx), fy(9), S);
+
+  // Nose
+  ctx.fillStyle = DARK;
+  px(fx(9), fy(8), S);
+
+  // Tiny body
+  ctx.fillStyle = ORANGE;
+  for (let gy = 10; gy <= 12; gy++) {
+    for (let gx = 5; gx <= 7; gx++) px(fx(gx), fy(gy), S);
+  }
+
+  // Feet
+  ctx.fillStyle = DARK;
+  px(fx(5), fy(12), S);
+  px(fx(7), fy(12), S);
+
+  // Goggles strap + frames
+  ctx.fillStyle = BLUE;
+  for (let gx = 2; gx <= 10; gx++) px(fx(gx), fy(5), S);
+  for (let gx = 4; gx <= 8; gx++) px(fx(gx), fy(6), S);
+  px(fx(4), fy(7), S);
+  px(fx(8), fy(7), S);
+
+  // Glass
+  ctx.fillStyle = GLASS;
+  for (let gx = 5; gx <= 7; gx++) px(fx(gx), fy(6), S);
+  for (let gx = 5; gx <= 7; gx++) px(fx(gx), fy(7), S);
+
+  // Eye dot
+  ctx.fillStyle = BLACK;
+  px(fx(6), fy(7), 1);
+
+  // Snorkel mouthpiece + tube
+  ctx.fillStyle = BLUE;
+  px(fx(10), fy(9), S);
+  px(fx(11), fy(9), S);
+
+  px(fx(11), fy(8), S);
+  px(fx(11), fy(7), S);
+  px(fx(11), fy(6), S);
+  px(fx(11), fy(5), S);
+  px(fx(11), fy(4), S);
+
+  // Snorkel tip
+  ctx.fillStyle = "#ff6b6b";
+  px(fx(11), fy(3), S);
+}
+
+// ===== Oxygen bar =====
 function drawOxygenBar() {
   const barX = 14;
   const barY = 34;
   const barW = 180;
   const barH = 14;
 
-  // background
   ctx.fillStyle = "rgba(255,255,255,0.25)";
   ctx.fillRect(barX, barY, barW, barH);
 
-  // fill
   const pct = oxygen / OXYGEN_MAX;
-  ctx.fillStyle =
-    pct > 0.35 ? "rgba(120,220,255,0.95)" : "rgba(255,120,120,0.95)";
+  ctx.fillStyle = pct > 0.35 ? "rgba(120,220,255,0.95)" : "rgba(255,120,120,0.95)";
   ctx.fillRect(barX, barY, Math.round(barW * pct), barH);
 
-  // outline + label
   ctx.strokeStyle = "rgba(255,255,255,0.55)";
   ctx.strokeRect(barX, barY, barW, barH);
 
@@ -246,12 +339,8 @@ function draw() {
     drawFish(f);
   }
 
-  // Player
-  ctx.fillStyle = "#f08c2b";
-  ctx.fillRect(Math.round(player.x), Math.round(player.y), player.w, player.h);
-
-  ctx.fillStyle = "#2b1a10";
-  ctx.fillRect(Math.round(player.x + player.w - 4), Math.round(player.y + 6), 2, 2);
+  // Player (sprite)
+  drawFoxSprite(player.x, player.y, player.facing);
 
   // Game Over overlay
   if (gameOver) {
