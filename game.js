@@ -34,6 +34,7 @@ const DRAIN_RATE = 18;   // oxygen per second drained underwater
 const REFILL_RATE = 55;  // oxygen per second refilled at surface
 
 let gameOver = false;
+let gameWon = false;
 
 // ===== Input state =====
 const keys = {
@@ -100,6 +101,7 @@ function resetGame() {
   player.y = 120;
   oxygen = OXYGEN_MAX;
   gameOver = false;
+  gameWon = false;
   spawnFish();
 }
 
@@ -110,13 +112,14 @@ let lastTime = performance.now();
 
 // ===== Update =====
 function update(dt) {
-  // Restart
-  if (gameOver && (keys.r || keys.R)) {
+  // Restart (works on win or lose)
+  if ((gameOver || gameWon) && (keys.r || keys.R)) {
     resetGame();
     return;
   }
 
-  if (gameOver) return;
+  // Freeze the game if ended
+  if (gameOver || gameWon) return;
 
   // Movement input
   let dx = 0;
@@ -151,6 +154,7 @@ function update(dt) {
 
   if (oxygen <= 0) {
     gameOver = true;
+    return;
   }
 
   // Fish collection
@@ -160,6 +164,11 @@ function update(dt) {
       f.alive = false;
       fishCollected += 1;
     }
+  }
+
+  // ✅ Win condition (MUST be inside update so it checks every frame)
+  if (fishCollected >= TOTAL_FISH) {
+    gameWon = true;
   }
 }
 
@@ -194,7 +203,8 @@ function drawOxygenBar() {
 
   // fill
   const pct = oxygen / OXYGEN_MAX;
-  ctx.fillStyle = pct > 0.35 ? "rgba(120,220,255,0.95)" : "rgba(255,120,120,0.95)";
+  ctx.fillStyle =
+    pct > 0.35 ? "rgba(120,220,255,0.95)" : "rgba(255,120,120,0.95)";
   ctx.fillRect(barX, barY, Math.round(barW * pct), barH);
 
   // outline + label
@@ -255,11 +265,24 @@ function draw() {
     ctx.font = "18px system-ui";
     ctx.fillText("Press R to Restart", W / 2 - 85, H / 2 + 26);
   }
+
+  // Win overlay
+  if (gameWon) {
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = "rgba(255,255,255,0.98)";
+    ctx.font = "38px system-ui";
+    ctx.fillText("YOU WIN!", W / 2 - 90, H / 2 - 10);
+
+    ctx.font = "18px system-ui";
+    ctx.fillText("Press R to Play Again", W / 2 - 105, H / 2 + 26);
+  }
 }
 
 // ===== Game Loop =====
 function loop(now) {
-  const dt = (now - lastTime) / 1000; // seconds
+  const dt = (now - lastTime) / 1000;
   lastTime = now;
 
   update(dt);
