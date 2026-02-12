@@ -14,7 +14,7 @@ let t = 0; // seconds
 // Player (fox)
 const player = {
   x: 100,
-  y: 120,
+  y: 10,     // ✅ spawn on land/surface
   w: 39,
   h: 39,
   speed: 2.6,
@@ -56,6 +56,21 @@ const LOG_SPEED_MAX = 120;
 // ===== Bubbles =====
 const bubbles = [];
 let bubbleTimer = 0;
+
+// ===== Atmosphere FX =====
+const dust = []; // floating particles
+const DUST_COUNT = 85;
+
+// Foreground seaweed
+const seaweed = [];
+const SEAWEED_COUNT = 14;
+
+// ===== Decor (background props) =====
+const decor = {
+  corals: [],
+  shells: [],
+  wreck: null,
+};
 
 // ===== Input state =====
 const keys = {
@@ -140,8 +155,8 @@ function spawnMines() {
       y: randInt(SURFACE_HEIGHT + 40, H - size - padding),
       w: size,
       h: size,
-      age: 0,        // how long it's existed
-      armed: false,  // becomes true after 1 second
+      age: 0,
+      armed: false,
     });
   }
 }
@@ -151,12 +166,10 @@ function spawnLog() {
   const w = randInt(55, 95);
   const h = randInt(14, 18);
 
-  // Spawn just off-screen left or right
-  const dir = Math.random() < 0.5 ? 1 : -1; // 1 = left->right, -1 = right->left
+  const dir = Math.random() < 0.5 ? 1 : -1;
   const x = dir === 1 ? -w - 10 : W + 10;
 
-  // Only underwater, not in the surface strip
-  const y = randInt(SURFACE_HEIGHT + 30, H - h - 12);
+  const y = randInt(SURFACE_HEIGHT + 34, H - h - 12);
 
   logs.push({
     x,
@@ -164,12 +177,89 @@ function spawnLog() {
     w,
     h,
     vx: dir * randFloat(LOG_SPEED_MIN, LOG_SPEED_MAX),
+    wobbleSeed: Math.random() * 10,
   });
 }
 
+// ===== Background decor spawn =====
+function spawnDecor() {
+  decor.corals.length = 0;
+  decor.shells.length = 0;
+
+  // Coral clusters
+  const coralCount = 7;
+  for (let i = 0; i < coralCount; i++) {
+    decor.corals.push({
+      x: randInt(20, W - 40),
+      y: randInt(Math.floor(H * 0.62), H - 35),
+      s: randInt(10, 22),
+      seed: Math.random() * 10,
+    });
+  }
+
+  // Shells
+  const shellCount = 9;
+  for (let i = 0; i < shellCount; i++) {
+    decor.shells.push({
+      x: randInt(10, W - 20),
+      y: randInt(H - 45, H - 12),
+      r: randInt(5, 10),
+      seed: Math.random() * 10,
+    });
+  }
+
+  // Shipwreck silhouette
+  const wreckW = randInt(140, 220);
+  const wreckH = randInt(55, 85);
+  decor.wreck = {
+    x: randInt(20, W - wreckW - 20),
+    y: randInt(Math.floor(H * 0.55), H - wreckH - 20),
+    w: wreckW,
+    h: wreckH,
+    tilt: randFloat(-0.18, 0.18),
+  };
+}
+
+// ===== Dust particles spawn =====
+function spawnDust() {
+  dust.length = 0;
+  for (let i = 0; i < DUST_COUNT; i++) {
+    dust.push({
+      x: Math.random() * W,
+      y: randFloat(SURFACE_HEIGHT + 10, H - 10),
+      r: randFloat(0.7, 1.8),
+      vx: randFloat(-6, 6),
+      vy: randFloat(-2, 2),
+      a: randFloat(0.06, 0.16),
+      seed: Math.random() * 10,
+    });
+  }
+}
+
+// ===== Seaweed spawn (foreground layer) =====
+function spawnSeaweed() {
+  seaweed.length = 0;
+
+  // Put most on bottom, a few mid-depth for parallax feel
+  for (let i = 0; i < SEAWEED_COUNT; i++) {
+    const baseY = randInt(Math.floor(H * 0.65), H - 8);
+    seaweed.push({
+      x: randInt(8, W - 8),
+      y: baseY,
+      h: randInt(40, 95),
+      w: randInt(10, 18),
+      seed: Math.random() * 10,
+      alpha: randFloat(0.14, 0.26),
+      layer: Math.random() < 0.7 ? 1 : 2, // 2 = closer = bigger sway
+    });
+  }
+}
+
+// ===== Reset =====
 function resetGame() {
   player.x = 100;
-  player.y = 120;
+  player.y = 10; // ✅ start on land
+
   oxygen = OXYGEN_MAX;
   gameOver = false;
   gameWon = false;
@@ -180,6 +270,9 @@ function resetGame() {
   logs.length = 0;
   logSpawnTimer = 0;
 
+  spawnDecor();
+  spawnDust();
+  spawnSeaweed();
   spawnFish();
   spawnMines();
 }
@@ -213,11 +306,9 @@ function update(dt) {
   if (keys.ArrowLeft) dx -= 1;
   if (keys.ArrowRight) dx += 1;
 
-  // Facing AFTER dx is computed
   if (dx < 0) player.facing = -1;
   if (dx > 0) player.facing = 1;
 
-  // Are we moving?
   isMoving = dx !== 0 || dy !== 0;
   if (isMoving) kickPhase += dt * 10;
 
@@ -236,16 +327,32 @@ function update(dt) {
   player.y = clamp(player.y, 0, H - player.h);
 
   // Oxygen logic
-  if (isAtSurface()) {
-    oxygen += REFILL_RATE * dt;
-  } else {
-    oxygen -= DRAIN_RATE * dt;
-  }
+  if (isAtSurface()) oxygen += REFILL_RATE * dt;
+  else oxygen -= DRAIN_RATE * dt;
+
   oxygen = clamp(oxygen, 0, OXYGEN_MAX);
 
   if (oxygen <= 0) {
     gameOver = true;
     return;
+  }
+
+  // ===== Dust update (underwater) =====
+  for (let i = 0; i < dust.length; i++) {
+    const d = dust[i];
+
+    // subtle swirl
+    d.vx += Math.sin(t * 0.7 + d.seed) * 0.03;
+    d.vy += Math.cos(t * 0.6 + d.seed) * 0.02;
+
+    d.x += d.vx * dt;
+    d.y += d.vy * dt;
+
+    // wrap
+    if (d.x < -10) d.x = W + 10;
+    if (d.x > W + 10) d.x = -10;
+    if (d.y < SURFACE_HEIGHT + 5) d.y = H - 10;
+    if (d.y > H + 10) d.y = SURFACE_HEIGHT + 10;
   }
 
   // ===== Bubble particles (only underwater + moving) =====
@@ -269,9 +376,7 @@ function update(dt) {
     b.y -= b.vy * dt;
     b.vx += Math.sin(t * 3 + i) * 4 * dt;
 
-    if (b.life <= 0 || b.y < SURFACE_HEIGHT - 20) {
-      bubbles.splice(i, 1);
-    }
+    if (b.life <= 0 || b.y < SURFACE_HEIGHT - 20) bubbles.splice(i, 1);
   }
 
   // ===== Fish collection =====
@@ -288,7 +393,6 @@ function update(dt) {
     m.age += dt;
     if (!m.armed && m.age >= MINE_ARM_DELAY) m.armed = true;
 
-    // Only lethal after armed
     if (m.armed && rectsOverlap(player, m)) {
       gameOver = true;
       return;
@@ -304,26 +408,226 @@ function update(dt) {
 
   for (let i = logs.length - 1; i >= 0; i--) {
     const L = logs[i];
-    L.x += L.vx * dt;
+    const wobble = Math.sin(t * 2 + L.wobbleSeed) * 0.35;
 
-    // Hit player (always dangerous)
+    L.x += L.vx * dt;
+    L.y += wobble;
+
     if (rectsOverlap(player, L)) {
       gameOver = true;
       return;
     }
 
-    // Remove once off-screen on the opposite side
     if (L.vx > 0 && L.x > W + 40) logs.splice(i, 1);
     else if (L.vx < 0 && L.x < -L.w - 40) logs.splice(i, 1);
   }
 
   // Win condition
-  if (fishCollected >= TOTAL_FISH) {
-    gameWon = true;
+  if (fishCollected >= TOTAL_FISH) gameWon = true;
+}
+
+// ===== Background drawing =====
+function drawBackground() {
+  // --- LAND / SURFACE STRIP ---
+  ctx.fillStyle = "#c9a36a"; // sand
+  ctx.fillRect(0, 0, W, SURFACE_HEIGHT);
+
+  ctx.fillStyle = "rgba(70,120,70,0.25)";
+  ctx.fillRect(0, 0, W, 16);
+
+  // shoreline foam
+  const foamY = SURFACE_HEIGHT - 4;
+  for (let x = 0; x < W; x += 10) {
+    const wiggle = Math.sin(t * 3 + x * 0.06) * 2;
+    ctx.fillStyle = "rgba(255,255,255,0.55)";
+    ctx.fillRect(x, foamY + wiggle, 8, 2);
+  }
+
+  // little land rocks
+  for (let i = 0; i < 8; i++) {
+    const rx = (i * 70 + 30) % W;
+    const ry = 18 + (i % 3) * 10;
+    ctx.fillStyle = "rgba(0,0,0,0.12)";
+    ctx.fillRect(rx, ry, 18, 8);
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.fillRect(rx + 2, ry + 2, 8, 2);
+  }
+
+  // --- WATER / UNDERWATER ---
+  ctx.fillStyle = "#123a64";
+  ctx.fillRect(0, SURFACE_HEIGHT, W, H - SURFACE_HEIGHT);
+
+  ctx.fillStyle = "rgba(9,28,54,0.35)";
+  ctx.fillRect(0, SURFACE_HEIGHT + 40, W, H - SURFACE_HEIGHT - 40);
+
+  ctx.fillStyle = "rgba(6,18,40,0.35)";
+  ctx.fillRect(0, SURFACE_HEIGHT + 140, W, H - SURFACE_HEIGHT - 140);
+
+  // light rays
+  for (let i = 0; i < 6; i++) {
+    const x = i * 140 + Math.sin(t * 0.6 + i) * 30;
+    ctx.fillStyle = "rgba(200,240,255,0.06)";
+    ctx.beginPath();
+    ctx.moveTo(x, SURFACE_HEIGHT);
+    ctx.lineTo(x + 70, SURFACE_HEIGHT);
+    ctx.lineTo(x + 170, H);
+    ctx.lineTo(x - 30, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // caustic shimmer lines
+  for (let i = 0; i < 5; i++) {
+    const baseY = SURFACE_HEIGHT + 40 + i * 70;
+    ctx.strokeStyle = "rgba(180,240,255,0.10)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 24) {
+      const y =
+        baseY +
+        Math.sin(t * 1.8 + x * 0.03 + i) * 6 +
+        Math.sin(t * 0.9 + x * 0.05) * 4;
+      if (x === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.lineWidth = 1;
+
+  // shipwreck silhouette
+  if (decor.wreck) {
+    const w = decor.wreck;
+    ctx.save();
+    ctx.translate(w.x + w.w / 2, w.y + w.h / 2);
+    ctx.rotate(w.tilt);
+    ctx.translate(-w.w / 2, -w.h / 2);
+
+    ctx.fillStyle = "rgba(0,0,0,0.20)";
+    ctx.fillRect(0, 0, w.w, w.h);
+
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(w.w * 0.65, -18, 10, 30);
+
+    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    for (let i = 0; i < 4; i++) ctx.fillRect(18 + i * 26, 18, 10, 10);
+    ctx.restore();
+  }
+
+  // coral
+  for (const c of decor.corals) {
+    const sway = Math.sin(t * 1.5 + c.seed) * 2;
+    ctx.fillStyle = "rgba(255,120,180,0.18)";
+    ctx.fillRect(c.x, c.y, c.s, c.s + 10);
+
+    ctx.fillStyle = "rgba(120,255,200,0.16)";
+    ctx.fillRect(c.x + 14 + sway, c.y + 6, c.s - 4, c.s);
+
+    ctx.fillStyle = "rgba(255,255,255,0.06)";
+    ctx.fillRect(c.x + 4, c.y + 6, 4, 10);
+  }
+
+  // shells
+  for (const s of decor.shells) {
+    const tw = Math.sin(t * 3 + s.seed) > 0.65;
+    ctx.fillStyle = "rgba(255,255,255,0.18)";
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (tw) {
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.fillRect(s.x - 1, s.y - s.r - 6, 2, 2);
+      ctx.fillRect(s.x + 3, s.y - s.r - 4, 2, 2);
+    }
+  }
+
+  // dust particles (behind gameplay)
+  for (const d of dust) {
+    ctx.fillStyle = `rgba(220,250,255,${d.a})`;
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    ctx.fill();
   }
 }
 
-// ===== Fish drawing (bigger + sparkle) =====
+// ===== Foreground seaweed layer =====
+function drawSeaweedForeground() {
+  // only makes sense underwater, but looks fine across screen
+  for (const w of seaweed) {
+    const sway =
+      Math.sin(t * 1.3 + w.seed) * (w.layer === 2 ? 10 : 6);
+
+    const tipX = w.x + sway;
+    const baseX = w.x;
+    const baseY = w.y;
+    const tipY = w.y - w.h;
+
+    // stem
+    ctx.strokeStyle = `rgba(80, 180, 120, ${w.alpha})`;
+    ctx.lineWidth = w.layer === 2 ? 5 : 4;
+    ctx.beginPath();
+    ctx.moveTo(baseX, baseY);
+    ctx.quadraticCurveTo(
+      baseX + sway * 0.35,
+      baseY - w.h * 0.45,
+      tipX,
+      tipY
+    );
+    ctx.stroke();
+
+    // leaf highlight
+    ctx.strokeStyle = `rgba(200, 255, 220, ${w.alpha * 0.35})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(baseX + 2, baseY - 10);
+    ctx.quadraticCurveTo(
+      baseX + sway * 0.2,
+      baseY - w.h * 0.5,
+      tipX + 2,
+      tipY + 6
+    );
+    ctx.stroke();
+  }
+
+  ctx.lineWidth = 1;
+}
+
+// ===== Vignette (dark edges) =====
+function drawVignette() {
+  // subtle overlay - multiple passes (cheap but good looking)
+  ctx.save();
+  ctx.fillStyle = "rgba(0,0,0,0.10)";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = "rgba(0,0,0,0.18)";
+  // top
+  ctx.fillRect(0, 0, W, 28);
+  // bottom
+  ctx.fillRect(0, H - 40, W, 40);
+  // left
+  ctx.fillRect(0, 0, 24, H);
+  // right
+  ctx.fillRect(W - 24, 0, 24, H);
+
+  // corner darkening
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ctx.beginPath();
+  ctx.arc(0, 0, 90, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(W, 0, 90, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, H, 110, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(W, H, 110, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// ===== Fish drawing =====
 function drawFish(f) {
   const x = Math.round(f.x);
   const y = Math.round(f.y);
@@ -358,24 +662,18 @@ function drawMine(m) {
   const x = Math.round(m.x);
   const y = Math.round(m.y);
 
-  // body outline
   ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.fillRect(x - 1, y - 1, m.w + 2, m.h + 2);
 
-  // body
   ctx.fillStyle = "#3a3f4a";
   ctx.fillRect(x, y, m.w, m.h);
 
-  // spikes
   ctx.fillStyle = "#222733";
   ctx.fillRect(x + m.w / 2 - 2, y - 6, 4, 6);
   ctx.fillRect(x + m.w / 2 - 2, y + m.h, 4, 6);
   ctx.fillRect(x - 6, y + m.h / 2 - 2, 6, 4);
   ctx.fillRect(x + m.w, y + m.h / 2 - 2, 6, 4);
 
-  // Fair warning:
-  // - first 1s: yellow blink (NOT lethal)
-  // - after: red blink (lethal)
   const blink = Math.sin(t * 8 + x) > 0;
 
   if (!m.armed) {
@@ -395,22 +693,19 @@ function drawLog(L) {
   const x = Math.round(L.x);
   const y = Math.round(L.y);
 
-  // outline
   ctx.fillStyle = "rgba(0,0,0,0.55)";
   ctx.fillRect(x - 1, y - 1, L.w + 2, L.h + 2);
 
-  // wood
   ctx.fillStyle = "#7a4b2a";
   ctx.fillRect(x, y, L.w, L.h);
 
-  // stripes
   ctx.fillStyle = "rgba(0,0,0,0.18)";
   for (let i = 0; i < L.w; i += 12) {
     ctx.fillRect(x + i, y + 2, 4, L.h - 4);
   }
 }
 
-// ===== Fox sprite (outline + bob + kick) =====
+// ===== Fox sprite =====
 function drawFoxSprite(x, y, facing) {
   const S = 3;
 
@@ -539,23 +834,19 @@ function drawOxygenBar() {
 function draw() {
   ctx.clearRect(0, 0, W, H);
 
-  // Surface zone
-  ctx.fillStyle = "#1b4b7a";
-  ctx.fillRect(0, 0, W, SURFACE_HEIGHT);
+  // Background pass (land + water + wreck + dust)
+  drawBackground();
 
-  // Water zone
-  ctx.fillStyle = "#0f2a4a";
-  ctx.fillRect(0, SURFACE_HEIGHT, W, H - SURFACE_HEIGHT);
+  // UI strip
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(0, 0, W, 26);
 
-  // Labels
-  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
   ctx.font = "14px system-ui";
-  ctx.fillText("SURFACE (breathe here)", 14, 22);
+  ctx.fillText("LAND (breathe here)", 14, 18);
 
-  // UI
-  ctx.fillStyle = "rgba(255,255,255,0.95)";
   ctx.font = "16px system-ui";
-  ctx.fillText(`Fish: ${fishCollected} / ${TOTAL_FISH}`, W - 170, 22);
+  ctx.fillText(`Fish: ${fishCollected} / ${TOTAL_FISH}`, W - 170, 18);
 
   drawOxygenBar();
 
@@ -572,7 +863,7 @@ function draw() {
   // Mines
   for (const m of mines) drawMine(m);
 
-  // Logs (current)
+  // Logs
   for (const L of logs) drawLog(L);
 
   // Fish
@@ -584,7 +875,13 @@ function draw() {
   // Player
   drawFoxSprite(player.x, player.y, player.facing);
 
-  // Game Over overlay
+  // ✅ Foreground seaweed (over gameplay)
+  drawSeaweedForeground();
+
+  // ✅ Vignette (final mood pass)
+  drawVignette();
+
+  // Overlays
   if (gameOver) {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, 0, W, H);
@@ -597,7 +894,6 @@ function draw() {
     ctx.fillText("Press R to Restart", W / 2 - 85, H / 2 + 26);
   }
 
-  // Win overlay
   if (gameWon) {
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     ctx.fillRect(0, 0, W, H);
